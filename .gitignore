@@ -39,10 +39,11 @@ venv.bak/
 *.sqlite3
 db.sqlite3
 
-# Logs
+# Logs & Static build
 *.log
 local_settings.py
 db.sqlite3-journal
+staticfiles/
 
 # IDE & Editor files
 .vscode/
