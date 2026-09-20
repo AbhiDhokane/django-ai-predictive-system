@@ -170,6 +170,7 @@ EMAIL_CONFIG = {
     'smtp_user': os.environ.get('SMTP_USER', ''),
     'smtp_password': os.environ.get('SMTP_PASSWORD', ''),
     'from_email': os.environ.get('EMAIL_FROM', os.environ.get('SMTP_USER', '')),
+    'resend_api_key': os.environ.get('RESEND_API_KEY', ''),
     'recipients': [
         r.strip()
         for r in os.environ.get('ALERT_RECIPIENTS', '').split(',')

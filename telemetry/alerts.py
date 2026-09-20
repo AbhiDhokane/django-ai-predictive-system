@@ -8,6 +8,7 @@ import socket
 import ssl
 import json
 import urllib.request
+import urllib.error
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -128,6 +129,55 @@ Schedule immediate mechanical and thermal inspection for Machine {machine_id}.
     return subject, plain_text, html_text
 
 
+def send_via_resend(
+    api_key: str,
+    from_addr: str,
+    targets: List[str],
+    subject: str,
+    html_text: str,
+    plain_text: str,
+) -> Dict[str, Any]:
+    """Dispatches alert email via Resend HTTPS REST API (Port 443 - works on Render Free)."""
+    url = "https://api.resend.com/emails"
+    # Resend default testing sender allows sending to the registered account email
+    sender = from_addr if ("@" in from_addr and not from_addr.lower().endswith("@gmail.com")) else "AI Predictive Alert <onboarding@resend.dev>"
+    
+    payload = json.dumps({
+        "from": sender,
+        "to": targets,
+        "subject": subject,
+        "html": html_text,
+        "text": plain_text,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "Django-AI-Predictive-Maintenance/1.0",
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            return {"sent": True, "recipients": targets, "status": "sent", "resend_id": res_data.get("id")}
+    except urllib.error.HTTPError as err:
+        err_body = err.read().decode("utf-8")
+        try:
+            parsed = json.loads(err_body)
+            msg = parsed.get("message", err_body)
+        except Exception:
+            msg = err_body
+        print(f"[Resend API Error] Status {err.code}: {msg}")
+        return {"sent": False, "reason": "api_error", "detail": f"Resend error ({err.code}): {msg}"}
+    except Exception as exc:
+        print(f"[Resend Error] {exc}")
+        return {"sent": False, "reason": "api_error", "detail": str(exc)}
+
+
 def send_alert_email(
     machine_id: str,
     status: str,
@@ -135,21 +185,32 @@ def send_alert_email(
     sensor: Dict[str, Any],
     recipients: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Sends email alert via SMTP or HTTPS API fallback."""
+    """Sends email alert via Resend HTTPS API (cloud-friendly) or SMTP fallback."""
     cfg = settings.EMAIL_CONFIG
     targets = recipients or cfg.get("recipients", [])
 
     if not targets:
         return {"sent": False, "reason": "no_recipients", "detail": "No recipients configured."}
 
+    subject, plain_text, html_text = _build_email_contents(machine_id, status, risk_percent, sensor)
+
+    # 1. Prefer Resend HTTPS API if configured (works seamlessly on Render Free & all cloud platforms)
+    resend_key = cfg.get("resend_api_key")
+    if resend_key:
+        from_addr = cfg.get("from_email") or "onboarding@resend.dev"
+        return send_via_resend(resend_key, from_addr, targets, subject, html_text, plain_text)
+
+    # 2. Otherwise fall back to traditional SMTP
     user = cfg.get("smtp_user", "")
     password = cfg.get("smtp_password", "")
     from_addr = cfg.get("from_email") or user
 
     if not user or not password:
-        return {"sent": False, "reason": "not_configured", "detail": "SMTP credentials not provided in .env"}
-
-    subject, plain_text, html_text = _build_email_contents(machine_id, status, risk_percent, sensor)
+        return {
+            "sent": False,
+            "reason": "not_configured",
+            "detail": "Neither RESEND_API_KEY nor SMTP credentials configured in environment variables."
+        }
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -177,7 +238,10 @@ def send_alert_email(
         return {"sent": True, "recipients": targets, "status": "sent"}
     except Exception as exc:
         print(f"[Email Error] Failed sending alert email for {machine_id}: {exc}")
-        return {"sent": False, "reason": "smtp_error", "detail": str(exc)}
+        err_msg = str(exc)
+        if "timed out" in err_msg.lower() or "10060" in err_msg or "refused" in err_msg.lower():
+            err_msg += " (Note: Cloud hosts like Render Free block SMTP ports 25/465/587. Add RESEND_API_KEY in Render Environment Variables for HTTPS delivery)"
+        return {"sent": False, "reason": "smtp_error", "detail": err_msg}
 
 
 def maybe_send_alert(
