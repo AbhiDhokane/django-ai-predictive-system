@@ -711,12 +711,13 @@ function renderAlertsTable(alerts) {
 
   tbody.innerHTML = alerts.map(a => {
     const isSent = a.email_status === 'sent';
-    const isFailed = a.email_status === 'failed';
+    const isError = a.email_status === 'failed' || (a.email_status && a.email_status.includes('error'));
+    const safeErrorTitle = (a.error_message || '').replace(/"/g, '&quot;');
     const statusBadge = isSent 
       ? '<span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold">Sent</span>'
-      : (isFailed 
-        ? '<span class="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-semibold" title="' + (a.error_message || '') + '">Failed</span>'
-        : '<span class="px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 text-[10px] font-semibold">' + (a.email_status || 'logged') + '</span>');
+      : (isError 
+        ? `<span class="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-semibold cursor-help" title="${safeErrorTitle || 'Error dispatching alert'}">${a.email_status}</span>`
+        : `<span class="px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-400 text-[10px] font-semibold" title="${safeErrorTitle}">${a.email_status || 'logged'}</span>`);
 
     const dateStr = formatLocalDateTime(a.sent_at);
     const recipientsList = Array.isArray(a.recipients) ? a.recipients.join(', ') : (a.recipients || '(none)');
