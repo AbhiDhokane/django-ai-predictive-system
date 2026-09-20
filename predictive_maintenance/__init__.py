@@ -1,0 +1,1 @@
+"""Django predictive maintenance package."""
